@@ -14,6 +14,9 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+int 
+mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+
 void
 tvinit(void)
 {
@@ -54,6 +57,15 @@ trap(struct trapframe *tf)
       wakeup(&ticks);
       release(&tickslock);
     }
+    struct proc * mp = myproc();
+      if(mp != 0 && (tf->cs & 3) == 3 && mp->alarmticks){
+        if (++mp->ticks == mp->alarmticks){
+          mp->ticks = 0;
+          tf->esp -= 4;
+          *(uint*)tf->esp = tf->eip;
+          tf -> eip = (uint)mp->alarmhandler;
+        }
+      }
     lapiceoi();
     break;
   case T_IRQ0 + IRQ_IDE:
@@ -87,6 +99,14 @@ trap(struct trapframe *tf)
       panic("trap");
     }
     // In user space, assume process misbehaved.
+    if(tf -> trapno == T_PGFLT){
+      cprintf("PG fault at addr 0x%x\n",rcr2());
+      char *mem;
+      mem = kalloc();
+      memset(mem, 0, PGSIZE);
+      mappages(myproc()->pgdir, (char*)PGROUNDDOWN(rcr2()), PGSIZE, V2P(mem), PTE_W|PTE_U);
+      break;
+    }
     cprintf("pid %d %s: trap %d err %d on cpu %d "
             "eip 0x%x addr 0x%x--kill proc\n",
             myproc()->pid, myproc()->name, tf->trapno,
